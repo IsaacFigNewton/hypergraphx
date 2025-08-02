@@ -13,7 +13,7 @@ class HypergraphVisualizer(IHypergraphVisualizer):
         super().__init__(g=g)
         self.directed = False
     
-    def to_nx(self) -> nx.Graph:
+    def to_nx(self, pairwise_only=True) -> nx.Graph:
         return self.get_pairwise_subgraph()
 
     def get_hyperedge_labels(self, key:str="type") -> Dict[tuple, str]:
