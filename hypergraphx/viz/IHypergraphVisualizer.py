@@ -22,13 +22,53 @@ class IHypergraphVisualizer(ABC):
         self.hyperedge_color_by_order = dict()
         self.hyperedge_facecolor_by_order = dict()
 
-    @abstractmethod
-    def to_nx(self, pairwise_only=True, *args, **kwargs) -> nx.DiGraph | nx.Graph:
-        pass
 
-    # TODO: Fix this to avoid wrapping node id's during edge creation:
-    #  want (a, b)
-    #  currently ((a,),(b,))?
+    @classmethod
+    def get_hyperedge_center_of_mass(cls,
+            pos: Dict[int, tuple],
+            hye: Tuple[int]
+        ) -> Tuple[List[Tuple[int, int]], float, float]:
+        points = [
+            (
+                pos[node][0],
+                pos[node][1]
+            ) for node in hye
+        ]
+        x_c = np.mean([x for x, y in points])
+        y_c = np.mean([y for x, y in points])
+        return points, x_c, y_c
+
+
+    @classmethod
+    def Smooth_by_Chaikin(cls,
+            coords: List[Tuple[float, float]],
+            number_of_refinements: int
+        ) -> List[Tuple[float, float]]:
+        coords = np.array(coords, dtype=float)
+
+        for _ in range(number_of_refinements):
+            new_coords = []
+
+            # Wrap around so last point connects to first
+            pairs = zip(coords, np.roll(coords, -1, axis=0))
+
+            for p1, p2 in pairs:
+                p1 = np.asarray(p1)
+                p2 = np.asarray(p2)
+
+                # Q: 1/4 of the way toward p2
+                Q = 0.75 * p1 + 0.25 * p2
+                # R: 3/4 of the way toward p2
+                R = 0.25 * p1 + 0.75 * p2
+
+                new_coords.append(Q)
+                new_coords.append(R)
+
+            coords = np.array(new_coords)
+
+        return [tuple(map(float, pt)) for pt in coords]
+    
+
     def get_pairwise_subgraph(self) -> nx.DiGraph | nx.Graph:
         """
         Convert a directed/undirected Hypergraph to a NetworkX Graph.
@@ -53,7 +93,8 @@ class IHypergraphVisualizer(ABC):
         
         return G
 
-    def get_node_labels(self, key:str="text") -> Dict[int, str]:
+
+    def get_node_labels(self, key:str="label") -> Dict[int, str]:
         """
         Get node labels for visualization.
         """
@@ -66,7 +107,7 @@ class IHypergraphVisualizer(ABC):
         }
 
 
-    def get_pairwise_edge_labels(self, key:str="type") -> Dict[tuple, str]:
+    def get_pairwise_edge_labels(self, key:str="label") -> Dict[tuple, str]:
         """
         Get edge labels for edges of order 1 (standard edge pairs) to use for visualization.
         """
@@ -79,26 +120,14 @@ class IHypergraphVisualizer(ABC):
             if key in metadata.keys()
         }
 
+
     @abstractmethod
-    def get_hyperedge_labels(self, key:str="type") -> Dict[tuple, str]:
+    def get_hyperedge_labels(self, key:str="label") -> Dict[tuple, str]:
         """
         Get hyperedge labels for visualization.
         """
         pass
 
-    def get_hyperedge_center_of_mass(self,
-            pos,
-            hye
-        ) -> Tuple[List[Tuple[int, int]], int, int]:
-        points = [
-            (
-                pos[node][0],
-                pos[node][1]
-            ) for node in hye
-        ]
-        x_c = np.mean([x for x, y in points])
-        y_c = np.mean([y for x, y in points])
-        return points, x_c, y_c
 
     @abstractmethod
     def get_hyperedge_styling_data(
@@ -106,10 +135,19 @@ class IHypergraphVisualizer(ABC):
             hye,
             pos: Dict[int, tuple],
             number_of_refinements: int = 12
-        ) -> Tuple[List[float], List[float]]:
+        ) -> Tuple[Tuple[float, float], Tuple[List[float], List[float]]]:
         """
         Get the fill data for a hyperedge.
+
+        Returns 2 tuples:
+            (x_c, y_c): center of mass of the hyperedge
+            (x_coords, y_coords): coords of the shape enclosing members of the hyperedge
         """
+        pass
+
+    
+    @abstractmethod
+    def to_nx(self, *args, **kwargs) -> nx.DiGraph | nx.Graph:
         pass
 
 
@@ -136,7 +174,7 @@ class IHypergraphVisualizer(ABC):
     ):
         
         # Initialize a networkx graph with the nodes and only the pairwise interactions of the hypergraph.
-        pairwise_G = self.to_nx(pairwise_only=True)
+        pairwise_G = self.to_nx()
         
         if type(node_shape) == str:
             node_shape = {n: node_shape for n in pairwise_G.nodes()}
@@ -199,13 +237,16 @@ class IHypergraphVisualizer(ABC):
         for hye in list(self.g.get_edges()):
             order = len(hye) - 1
             if order > 1:
-                x1, y1 = self.get_hyperedge_styling_data(
+                center_of_mass, outline_coords = self.get_hyperedge_styling_data(
                     hye,
                     pos,
                 )
+                x_c, y_c = center_of_mass
+                x_coords, y_coords = outline_coords
+
                 ax.fill(
-                    x1,
-                    y1,
+                    x_coords,
+                    y_coords,
                     alpha=hyperedge_alpha,
                     c=self.hyperedge_color_by_order[order],
                     edgecolor=self.hyperedge_facecolor_by_order[order],
@@ -213,7 +254,7 @@ class IHypergraphVisualizer(ABC):
                 if with_hyperedge_labels:
                     ax.annotate(
                         self.hyperedge_labels.get(hye, ''),
-                        (x1, y1),
+                        (x_c, y_c),
                         fontsize=label_size,
                         color=label_col,
                     )
